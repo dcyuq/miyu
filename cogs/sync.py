@@ -40,7 +40,6 @@ class Sync(commands.Cog):
             ctx,
             embeds.error(
                 "the sync did not go through. check the log for details.",
-                title="Sync failed",
             ),
         )
 
@@ -55,7 +54,6 @@ class Sync(commands.Cog):
                 f"synced {len(synced)} command(s) globally. global commands "
                 "can take up to an hour to appear everywhere. Use "
                 f"`{display_prefix(ctx)}sync here` for an instant test in this server.",
-                title="Synced",
             ),
         )
 
@@ -70,7 +68,6 @@ class Sync(commands.Cog):
             ctx,
             embeds.notice(
                 f"synced {len(synced)} command(s) to this server.",
-                title="Synced",
             ),
         )
 
