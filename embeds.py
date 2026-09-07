@@ -7,17 +7,6 @@ _installed = False
 
 def install():
     global _installed
-    if _installed:
-        return
-
-    original = discord.Embed.__init__
-
-    def patched(self, *, colour=None, color=None, **kwargs):
-        if colour is None and color is None:
-            colour = ACCENT
-        original(self, colour=colour, color=color, **kwargs)
-
-    discord.Embed.__init__ = patched
     _installed = True
 
 
@@ -25,7 +14,7 @@ def build(description=None, *, title=None, color=None, **kwargs):
     return discord.Embed(
         title=title,
         description=description,
-        color=ACCENT if color is None else color,
+        color=color,
         **kwargs,
     )
 
