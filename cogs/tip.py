@@ -30,13 +30,11 @@ COOLDOWN_SECONDS = 30
 PAD = "ㅤ"
 
 DEFAULT_TEMPLATE = (
-    f":03dc_cake:{PAD}a sweet little tip for {{user}}\n"
+    f"**a tip for {{user}}**\n"
     f"{PAD}\n"
-    f":shortcake1:{PAD}{{amount}}\n"
-    f"{PAD}\n"
-    f":strawberri:{PAD}thank you for keeping the treats coming!\n"
-    f":IceCreamSundae:{PAD}tipped by: {{tipper}}\n"
-    f":dndexl:{PAD}{{date}}"
+    f"amount: {{amount}}\n"
+    f"tipped by: {{tipper}}\n"
+    f"{{date}}"
 )
 
 FIELDS = ("user", "amount", "tipper", "date", "time", "when", "count")
@@ -55,15 +53,14 @@ ALIASES = {
 }
 
 SAMPLE = {
-    "user": "@barista",
+    "user": "@user",
     "amount": "$5.00",
-    "tipper": "@customer",
+    "tipper": "@someone",
     "date": "august 30, 2026",
     "time": "10:22 pm",
     "when": "just now",
     "count": "7",
 }
-
 
 def save_config():
     _config_store.save(config)
