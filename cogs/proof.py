@@ -182,29 +182,24 @@ def counter_text(guild, settings):
     return body[:2000]
 
 
-def framed_image(picture):
-    return discord.ui.Container(
-        discord.ui.MediaGallery(discord.MediaGalleryItem(picture.reference))
-    )
-
-
 class ProofPost(discord.ui.LayoutView):
-    def __init__(self, text, picture):
+    def __init__(self, text, media):
         super().__init__(timeout=None)
-        self.add_item(discord.ui.TextDisplay(text or "​"))
-        if picture is not None:
-            self.add_item(framed_image(picture))
+        self.add_item(discord.ui.TextDisplay(text or "\u200b"))
+        frame = attach.frame(media)
+        if frame is not None:
+            self.add_item(frame)
 
 
 class StickyNote(discord.ui.LayoutView):
     def __init__(self, text):
         super().__init__(timeout=None)
         self.add_item(
-            discord.ui.Container(discord.ui.TextDisplay(text or "​"))
+            discord.ui.Container(discord.ui.TextDisplay(text or "\u200b"))
         )
 
 
-async def post_proof(channel, guild, settings, record, picture, author):
+async def post_proof(channel, guild, settings, record, media, author):
     text = proof_text(guild, settings, record)
     ping = settings.get("ping", True)
     mentions = discord.AllowedMentions(
@@ -212,8 +207,8 @@ async def post_proof(channel, guild, settings, record, picture, author):
     )
 
     return await channel.send(
-        view=ProofPost(text, picture),
-        files=[picture.file()] if picture is not None else [],
+        view=ProofPost(text, media),
+        files=[media.file()] if media is not None else [],
         allowed_mentions=mentions,
     )
 
@@ -303,27 +298,28 @@ class ConfirmRow(discord.ui.ActionRow):
 
 
 class PreviewView(discord.ui.LayoutView):
-    def __init__(self, ctx, settings, record, picture):
+    def __init__(self, ctx, settings, record, media):
         super().__init__(timeout=300)
         self.ctx = ctx
         self.settings = settings
         self.record = record
-        self.picture = picture
+        self.media = media
         self.message = None
         self.done = False
         self.build()
 
     def proof_body(self):
-        return proof_text(self.ctx.guild, self.settings, self.record) or "​"
+        return proof_text(self.ctx.guild, self.settings, self.record) or "\u200b"
 
     def files(self):
-        return [self.picture.file()] if self.picture is not None else []
+        return [self.media.file()] if self.media is not None else []
 
     def build(self):
         self.clear_items()
         self.add_item(discord.ui.TextDisplay(self.proof_body()))
-        if self.picture is not None:
-            self.add_item(framed_image(self.picture))
+        frame = attach.frame(self.media)
+        if frame is not None:
+            self.add_item(frame)
         self.add_item(discord.ui.Separator(visible=True))
         self.add_item(
             discord.ui.Container(
@@ -391,7 +387,7 @@ class PreviewView(discord.ui.LayoutView):
 
         try:
             sent = await post_proof(
-                channel, guild, settings, self.record, self.picture, self.ctx.author
+                channel, guild, settings, self.record, self.media, self.ctx.author
             )
         except discord.Forbidden:
             await interaction.followup.send(
@@ -604,7 +600,7 @@ class SetupView(discord.ui.View):
 
         lines = [
             f"**Drops in** · {channel.mention if channel else 'not set'}",
-            f"**Image** · "
+            f"**Image or video** · "
             f"{'required' if settings.get('require_image') else 'optional'}",
             f"**Who can post** · "
             f"{'staff only' if settings.get('staff_only') else 'anyone'}",
@@ -657,13 +653,13 @@ class SetupView(discord.ui.View):
                 + "\n".join(f"`{{{f}}}`" for f in FIELDS)
                 + "\n\ncounter fields:\n\n"
                 + "\n".join(f"`{{{f}}}`" for f in COUNTER_FIELDS)
-                + "\n\ntype `:name:` for a server emoji. the proof image is "
-                "added under the text automatically."
+                + "\n\ntype `:name:` for a server emoji. the proof image or "
+                "video is added under the text automatically."
             ),
             ephemeral=True,
         )
 
-    @discord.ui.button(label="require image", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="require proof", style=discord.ButtonStyle.secondary, row=1)
     async def toggle_image(self, interaction, button):
         await interaction.response.defer()
         self.settings["require_image"] = not self.settings.get("require_image", True)
@@ -735,11 +731,11 @@ class Proof(commands.Cog):
         name="proof",
         invoke_without_command=True,
         fallback="add",
-        description="Post a proof with an image and feedback.",
+        description="Post a proof with an image or video and feedback.",
     )
     @app_commands.describe(
         item="What the proof is for",
-        proof="A screenshot or photo as proof",
+        proof="A screenshot, photo, or video as proof",
         feedback="Your feedback",
     )
     @commands.guild_only()
@@ -799,11 +795,11 @@ class Proof(commands.Cog):
 
         if proof is None and settings.get("require_image", True):
             await embeds.send(
-                ctx, embeds.error("attach an **image** as proof.")
+                ctx, embeds.error("attach an **image or video** as proof.")
             )
             return
 
-        picture, problem = await attach.read_image(proof)
+        media, problem = await attach.read_media(proof, limit=attach.limit_for(ctx.guild))
         if problem:
             await embeds.send(ctx, embeds.error(problem))
             return
@@ -825,7 +821,7 @@ class Proof(commands.Cog):
             "message_id": None,
         }
 
-        view = PreviewView(ctx, settings, record, picture)
+        view = PreviewView(ctx, settings, record, media)
 
         view.message = await ctx.send(
             view=view,
