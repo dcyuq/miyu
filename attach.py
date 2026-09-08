@@ -1,129 +1,98 @@
-import asyncio
 import io
+import logging
 import re
 
 import discord
 
-FALLBACK_NAME = "image.png"
+log = logging.getLogger(__name__)
 
-# How many attachments a single reading (or message) may carry. Discord
-# caps a message at ten files, so there is no point taking more.
-MAX_FILES = 10
+MAX_BYTES = 8 * 1024 * 1024
 
-IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp")
+IMAGE_EXTENSIONS = ("png", "jpg", "jpeg", "gif", "webp", "avif", "heic")
+VIDEO_EXTENSIONS = ("mp4", "mov", "webm", "m4v")
 
-
-def safe_filename(name):
-    """attachment:// cannot reference a name with spaces or odd characters."""
-    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", name or FALLBACK_NAME)
-    return cleaned[-60:] or FALLBACK_NAME
+UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 
-class Picture:
-    """An uploaded file, re-readable.
+def safe_name(filename, fallback="proof"):
+    cleaned = UNSAFE.sub("_", filename or "").strip("._")
+    if not cleaned or "." not in cleaned:
+        return f"{fallback}.png"
+    return cleaned[-90:]
 
-    Discord's CDN links are signed and stop working after about a day, so
-    the bytes are held and re-uploaded rather than linked. A discord.File
-    is single use, so each destination gets a fresh one from the same bytes.
 
-    Despite the name it happily holds any file, not just images; is_image
-    tells callers which ones an embed can actually show.
-    """
+def extension(filename):
+    return filename.rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
 
-    def __init__(self, data, filename, content_type=None):
+
+def kind_of(attachment):
+    content_type = (attachment.content_type or "").lower()
+    ext = extension(attachment.filename)
+
+    if content_type.startswith("image/") or ext in IMAGE_EXTENSIONS:
+        return "image"
+    if content_type.startswith("video/") or ext in VIDEO_EXTENSIONS:
+        return "video"
+    return None
+
+
+class Media:
+    def __init__(self, name, data, kind):
+        self.name = name
         self.data = data
-        self.filename = safe_filename(filename)
-        self.content_type = content_type or ""
+        self.kind = kind
 
     @property
-    def is_image(self):
-        if self.content_type.startswith("image/"):
-            return True
-        return self.filename.lower().endswith(IMAGE_EXTS)
+    def is_video(self):
+        return self.kind == "video"
 
     @property
     def reference(self):
-        return f"attachment://{self.filename}"
+        return f"attachment://{self.name}"
 
     def file(self):
-        return discord.File(io.BytesIO(self.data), filename=self.filename)
+        return discord.File(io.BytesIO(self.data), filename=self.name)
 
 
-async def read_image(attachment):
-    """Returns (picture, error). Blank attachment is not an error.
+def limit_for(guild):
+    if guild is None:
+        return MAX_BYTES
+    return max(MAX_BYTES, guild.filesize_limit)
 
-    Image only; used where an embed image is the whole point (vouches).
-    """
+
+async def read_media(attachment, limit=MAX_BYTES):
     if attachment is None:
         return None, None
 
-    if not (attachment.content_type or "").startswith("image/"):
-        return None, "that attachment is not an image."
+    kind = kind_of(attachment)
+    if kind is None:
+        return None, "that file has to be an **image** or a **video**."
+
+    if attachment.size > limit:
+        return None, f"keep the file under **{limit // (1024 * 1024)}MB**."
 
     try:
         data = await attachment.read()
     except discord.HTTPException:
-        return None, "i could not read that image."
+        log.exception("failed to read attachment %s", attachment.id)
+        return None, "i could not read that file. try uploading it again."
 
-    return Picture(data, attachment.filename, attachment.content_type), None
+    if not data:
+        return None, "that file came through empty."
 
-
-async def read_file(attachment):
-    """Read one attachment of any type. Returns (picture, error)."""
-    if attachment is None:
-        return None, None
-
-    try:
-        data = await attachment.read()
-    except discord.HTTPException:
-        return None, f"i could not read `{attachment.filename}`."
-
-    return Picture(data, attachment.filename, attachment.content_type), None
+    return Media(safe_name(attachment.filename), data, kind), None
 
 
-async def read_files(attachments, limit=MAX_FILES):
-    """Read several attachments of any type. Returns (pictures, error).
-
-    Downloads run concurrently, so ten photos take about as long as one.
-    An empty list in, an empty list out - no attachments is not an error.
-    """
-    picked = [a for a in attachments if a is not None]
-    if len(picked) > limit:
-        return [], f"that is too many files. i can take up to {limit} at once."
-
-    results = await asyncio.gather(*(read_file(a) for a in picked))
-
-    pictures = []
-    for picture, problem in results:
-        if problem:
-            return [], problem
-        pictures.append(picture)
-    return pictures, None
+read_image = read_media
 
 
-def attachment_payload(pictures, embed_target=None):
-    """Fresh discord.File list with unique names, safe to send together.
+def frame(media):
+    if media is None:
+        return None
 
-    Returns (files, reference). Two uploads that share a filename would
-    collide, so repeats get a numeric suffix. reference is the
-    attachment:// url for embed_target once its final (deduped) name is
-    known, or None when embed_target is not in the list.
-    """
-    used = set()
-    files = []
-    reference = None
+    if media.is_video:
+        return discord.ui.Container(discord.ui.File(media.reference))
 
-    for picture in pictures:
-        name = picture.filename
-        stem, dot, ext = picture.filename.rpartition(".")
-        attempt = 1
-        while name in used:
-            attempt += 1
-            name = f"{stem}-{attempt}{dot}{ext}" if dot else f"{picture.filename}-{attempt}"
-        used.add(name)
-
-        files.append(discord.File(io.BytesIO(picture.data), filename=name))
-        if picture is embed_target:
-            reference = f"attachment://{name}"
-
-    return files, reference
+    return discord.ui.Container(
+        discord.ui.MediaGallery(discord.MediaGalleryItem(media.reference))
+    )
